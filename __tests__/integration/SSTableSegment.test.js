@@ -40,3 +40,34 @@ test('check if write is possible until threshold is reached', async () => {
 
   rimraf.sync(basePath);
 });
+
+test('check if findNearestKey function is working properly', () => {
+  let arr = [2, 5, 8, 12, 16, 23, 38, 56, 72, 91];
+  let result;
+
+  result = SSTableSegment.findNearestKey(arr, 23);
+  expect(result).toEqual([23]);
+
+  result = SSTableSegment.findNearestKey(arr, 21);
+  expect(result).toEqual([16, 23]);
+
+  result = SSTableSegment.findNearestKey(arr, 91);
+  expect(result).toEqual([91]);
+
+  result = SSTableSegment.findNearestKey(arr, 99);
+  expect(result).toEqual([]);
+
+  result = SSTableSegment.findNearestKey(arr, 0);
+  expect(result).toEqual([]);
+
+  arr = [-20, -18, -10, -2, 0, 1, 10, 20, 22];
+
+  result = SSTableSegment.findNearestKey(arr, -18);
+  expect(result).toEqual([-18]);
+
+  result = SSTableSegment.findNearestKey(arr, 12);
+  expect(result).toEqual([10, 20]);
+
+  result = SSTableSegment.findNearestKey(arr, -17);
+  expect(result).toEqual([-18, -10]);
+});

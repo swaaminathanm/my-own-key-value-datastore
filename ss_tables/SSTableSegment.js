@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {FS_OPEN_ERROR, FS_WRITE_ERROR, FILE_FULL_ERROR} = require('../errors');
-const {SM_TABLE_MAX_SIZE_IN_BYTES, SM_TABLE_IN_MEMORY_SPARSE_KEYS_TRESHOLD_BYTES} = require('../config');
+const {SM_TABLE_MAX_SIZE_IN_BYTES, SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES} = require('../config');
 
 class SSTableSegment {
   constructor(basePath) {
@@ -11,6 +11,7 @@ class SSTableSegment {
     this.fileExtension = "txt";
     this._position = 0;
     this._index = {};
+    this._indexedKeys = [];
     this._indexBucket = -1;
   }
 
@@ -26,8 +27,53 @@ class SSTableSegment {
     return this._position <= SM_TABLE_MAX_SIZE_IN_BYTES;
   }
 
+  static findNearestKey(arr, key) {
+    let leftIndex = 0;
+    let rightIndex = arr.length - 1;
+    let wasKeyFound = false;
+    let foundKey;
+    let nearestLowerIndex;
+    let nearestHigherIndex;
+    let tempLowestDifference = Number.MAX_SAFE_INTEGER;
+    let tempHighestDifference = Number.MAX_SAFE_INTEGER;
+
+    while (rightIndex >= leftIndex) {
+      const pivotIndex = leftIndex + Math.floor((rightIndex - leftIndex) / 2);
+      const pivotElement = arr[pivotIndex];
+      const diff = Math.abs(pivotElement - key);
+
+      if (pivotElement ===  key) {
+        foundKey = key;
+        wasKeyFound = true;
+        break;
+      } else if (pivotElement > key) {
+        rightIndex = pivotIndex - 1;
+        if (diff < tempHighestDifference) {
+          nearestHigherIndex = pivotIndex;
+          tempHighestDifference = diff;
+        }
+      } else {
+        leftIndex = pivotIndex + 1;
+        if (diff < tempLowestDifference) {
+          nearestLowerIndex = pivotIndex;
+          tempLowestDifference = diff;
+        }
+      }
+    }
+
+    if (wasKeyFound) {
+      return [key]
+    } else {
+      if (nearestHigherIndex && nearestLowerIndex) {
+        return [arr[nearestLowerIndex], arr[nearestHigherIndex]]
+      }
+    }
+
+    return [];
+  }
+
   _shouldStoreLogInIndex() {
-    const indexBucket = Math.floor(this._position/SM_TABLE_IN_MEMORY_SPARSE_KEYS_TRESHOLD_BYTES);
+    const indexBucket = Math.floor(this._position/SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES);
     if (indexBucket !== this._indexBucket) {
       this._indexBucket = indexBucket;
       return true;
@@ -39,7 +85,20 @@ class SSTableSegment {
   _storeLogInIndex(key, position) {
     if (this._shouldStoreLogInIndex()) {
       this._index[key] = position;
+      this._indexedKeys.push(key);
     }
+  }
+
+  delete() {
+    return new Promise((resolve, reject) => {
+      fs.unlink(this.getFileFullPath(), (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      })
+    });
   }
 
   /*
@@ -68,7 +127,7 @@ class SSTableSegment {
             code: FS_OPEN_ERROR,
             error: err
           });
-        }else {
+        } else {
           fs.write(
             fd,
             bufferToWrite,
