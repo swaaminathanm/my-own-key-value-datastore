@@ -5,7 +5,6 @@ const rimraf = require("rimraf");
 const SSTableSegment = require('../../ss_tables/SSTableSegment');
 
 const basePath = path.join(__dirname, 'example');
-const ssTableSegment = new SSTableSegment(basePath);
 
 const makeRandomValue = (length) => {
   let result           = '';
@@ -18,6 +17,8 @@ const makeRandomValue = (length) => {
 };
 
 test('check if file path is correct', () => {
+  const ssTableSegment = new SSTableSegment(basePath);
+
   expect(ssTableSegment.getFileFullPath())
     .toBe(`${basePath}/${ssTableSegment.fileName}.${ssTableSegment.fileExtension}`);
 });
@@ -27,16 +28,18 @@ test('check if write is possible until threshold is reached', async () => {
     fs.mkdirSync(basePath);
   }
 
+  const ssTableSegment = new SSTableSegment(basePath);
+
   const N = 1000;
   for(let i=0;i<N;i++) {
     const key = Math.floor(9 + Math.random() * 90);
     const value = makeRandomValue(5);
-    await ssTableSegment.write(key, value);
+    await ssTableSegment.put(key, value);
   }
 
   expect(ssTableSegment.canWrite()).toBe(true);
-  expect(Object.keys(ssTableSegment.getIndex()).length).toBeGreaterThanOrEqual(8);
-  expect(Object.keys(ssTableSegment.getIndex()).length).toBeLessThanOrEqual(10);
+  expect(Object.keys(ssTableSegment._getIndex()).length).toBeGreaterThanOrEqual(8);
+  expect(Object.keys(ssTableSegment._getIndex()).length).toBeLessThanOrEqual(10);
 
   rimraf.sync(basePath);
 });
@@ -46,28 +49,100 @@ test('check if findNearestKey function is working properly', () => {
   let result;
 
   result = SSTableSegment.findNearestKey(arr, 23);
-  expect(result).toEqual([23]);
+  expect(result.key).toBe(23);
 
   result = SSTableSegment.findNearestKey(arr, 21);
-  expect(result).toEqual([16, 23]);
+  expect(result.nearestMinima).toBe(16);
+  expect(result.nearestMaxima).toBe(23);
 
   result = SSTableSegment.findNearestKey(arr, 91);
-  expect(result).toEqual([91]);
+  expect(result.key).toBe(91);
 
   result = SSTableSegment.findNearestKey(arr, 99);
-  expect(result).toEqual([]);
+  expect(result.nearestMinima).toBe(91);
+  expect(result.nearestMaxima).toBe(undefined);
 
   result = SSTableSegment.findNearestKey(arr, 0);
-  expect(result).toEqual([]);
+  expect(result.nearestMinima).toBe(undefined);
+  expect(result.nearestMaxima).toBe(2);
+});
 
-  arr = [-20, -18, -10, -2, 0, 1, 10, 20, 22];
+test('check get value of key that is present in range of internal index', async () => {
+  if (!fs.existsSync(basePath)){
+    fs.mkdirSync(basePath);
+  }
 
-  result = SSTableSegment.findNearestKey(arr, -18);
-  expect(result).toEqual([-18]);
+  const ssTableSegment = new SSTableSegment(basePath);
 
-  result = SSTableSegment.findNearestKey(arr, 12);
-  expect(result).toEqual([10, 20]);
+  const dummyDb = {};
+  const N = 250;
+  for(let i=0;i<N;i++) {
+    const key = Math.floor(i);
+    const value = makeRandomValue(5);
+    dummyDb[i] = value;
+    await ssTableSegment.put(key, value);
+  }
 
-  result = SSTableSegment.findNearestKey(arr, -17);
-  expect(result).toEqual([-18, -10]);
+  let key = "150";
+  let result = await ssTableSegment.get(key);
+
+  expect(result.key).toBe(key);
+  expect(result.value).toBe(dummyDb[key]);
+
+  key = "249";
+  result = await ssTableSegment.get(key);
+
+  expect(result.key).toBe(key);
+  expect(result.value).toBe(dummyDb[key]);
+
+  rimraf.sync(basePath);
+});
+
+test('check get value of key that is present exactly in internal index', async () => {
+  if (!fs.existsSync(basePath)){
+    fs.mkdirSync(basePath);
+  }
+
+  const ssTableSegment = new SSTableSegment(basePath);
+
+  const dummyDb = {};
+  const N = 10;
+  for(let i=0;i<N;i++) {
+    const key = Math.floor(i);
+    const value = makeRandomValue(5);
+    dummyDb[i] = value;
+    await ssTableSegment.put(key, value);
+  }
+
+  let key = "0";
+  let result = await ssTableSegment.get(key);
+
+  expect(result.key).toBe(key);
+  expect(result.value).toBe(dummyDb[key]);
+
+  rimraf.sync(basePath);
+});
+
+test('check get value return null if key not present', async () => {
+  if (!fs.existsSync(basePath)){
+    fs.mkdirSync(basePath);
+  }
+
+  const ssTableSegment = new SSTableSegment(basePath);
+
+  const dummyDb = {};
+  const N = 10;
+  for(let i=0;i<N;i++) {
+    const key = Math.floor(i);
+    const value = makeRandomValue(5);
+    dummyDb[i] = value;
+    await ssTableSegment.put(key, value);
+  }
+
+  let key = "10";
+  let result = await ssTableSegment.get(key);
+
+  expect(result).toBeNull();
+
+  rimraf.sync(basePath);
 });

@@ -15,10 +15,6 @@ class SSTableSegment {
     this._indexBucket = -1;
   }
 
-  getIndex() {
-    return this._index;
-  }
-
   getFileFullPath() {
     return path.join(this.basePath, `${this.fileName}.${this.fileExtension}`);
   }
@@ -27,49 +23,116 @@ class SSTableSegment {
     return this._position <= SM_TABLE_MAX_SIZE_IN_BYTES;
   }
 
-  static findNearestKey(arr, key) {
-    let leftIndex = 0;
-    let rightIndex = arr.length - 1;
-    let wasKeyFound = false;
-    let foundKey;
-    let nearestLowerIndex;
-    let nearestHigherIndex;
-    let tempLowestDifference = Number.MAX_SAFE_INTEGER;
-    let tempHighestDifference = Number.MAX_SAFE_INTEGER;
+  get(key) {
+    const nearest = SSTableSegment.findNearestKey(this._indexedKeys, key);
 
-    while (rightIndex >= leftIndex) {
-      const pivotIndex = leftIndex + Math.floor((rightIndex - leftIndex) / 2);
-      const pivotElement = arr[pivotIndex];
-      const diff = Math.abs(pivotElement - key);
-
-      if (pivotElement ===  key) {
-        foundKey = key;
-        wasKeyFound = true;
-        break;
-      } else if (pivotElement > key) {
-        rightIndex = pivotIndex - 1;
-        if (diff < tempHighestDifference) {
-          nearestHigherIndex = pivotIndex;
-          tempHighestDifference = diff;
-        }
-      } else {
-        leftIndex = pivotIndex + 1;
-        if (diff < tempLowestDifference) {
-          nearestLowerIndex = pivotIndex;
-          tempLowestDifference = diff;
-        }
-      }
+    if (nearest.key) {
+      return this._getLogFromPositionRange(
+        this._index[nearest.key],
+        -1,
+        key
+      );
+    } else if (nearest.nearestMinima && !nearest.nearestMaxima) {
+      return this._getLogFromPositionRange(
+        this._index[nearest.nearestMinima],
+        -1,
+        key
+      );
+    } else if (nearest.nearestMinima && nearest.nearestMaxima) {
+      return this._getLogFromPositionRange(
+        this._index[nearest.nearestMinima],
+        this._index[nearest.nearestMaxima],
+        key
+      );
     }
 
-    if (wasKeyFound) {
-      return [key]
-    } else {
-      if (nearestHigherIndex && nearestLowerIndex) {
-        return [arr[nearestLowerIndex], arr[nearestHigherIndex]]
+    return null;
+  }
+
+  deleteFile() {
+    return new Promise((resolve, reject) => {
+      fs.unlink(this.getFileFullPath(), (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      })
+    });
+  }
+
+  put(key, value) {
+    return this._write(`${key}`, value);
+  }
+
+  _getIndex() {
+    return this._index;
+  }
+
+  _getLogFromPositionRange(fromPosition, toPosition, keyToSearch) {
+    return new Promise((resolve, reject) => {
+      fs.open(this.getFileFullPath(), 'r', (err, fd) => {
+        fs.fstat(fd, (err, stats) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+
+          if (toPosition < 0) toPosition = stats.size - 1;
+
+          const lengthToBeRead = (toPosition - fromPosition + 1);
+          const buffer =  Buffer.alloc(lengthToBeRead);
+          const positionToBeReadFrom = fromPosition;
+
+          fs.readSync(fd, buffer, 0, lengthToBeRead, positionToBeReadFrom);
+
+          resolve(this._traverseAndGetLogForKey(buffer.toString(), keyToSearch));
+        });
+      });
+    })
+  };
+
+  _traverseAndGetLogForKey(stringChunk, keyToSearch) {
+    let i = 0;
+
+    while (i < stringChunk.length) {
+      let indexOfFirstDelimiterInGivenChunk = stringChunk.indexOf(":", i);
+
+      if (indexOfFirstDelimiterInGivenChunk < 0) return null;
+
+      let bytesToCountInString = stringChunk.substring(i, indexOfFirstDelimiterInGivenChunk);
+
+      const bytesToCount = parseInt(bytesToCountInString);
+
+      if (isNaN(bytesToCount)) {
+        return null;
       }
+
+      i = indexOfFirstDelimiterInGivenChunk;
+      i++;
+
+      const log = stringChunk.substring(i, (i + bytesToCount));
+      const {key, value} = this._parseLogToGetKeyAndValue(log);
+
+      if (key === keyToSearch) {
+        return {
+          key,
+          value
+        }
+      }
+
+      i += bytesToCount;
     }
 
-    return [];
+    return null;
+  }
+
+  _parseLogToGetKeyAndValue(log) {
+    const str = log.split(":");
+    return {
+      key: str[0],
+      value: str[1]
+    }
   }
 
   _shouldStoreLogInIndex() {
@@ -89,18 +152,6 @@ class SSTableSegment {
     }
   }
 
-  delete() {
-    return new Promise((resolve, reject) => {
-      fs.unlink(this.getFileFullPath(), (err) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve();
-        }
-      })
-    });
-  }
-
   /*
   Steps:
     1. Encode string as <length>:<key>:<value>
@@ -108,7 +159,7 @@ class SSTableSegment {
     3. Write to a file
     4. Store starting offset to index
   */
-  write(key, value) {
+  _write(key, value) {
     return new Promise((resolve, reject) => {
       if (!this.canWrite()) {
         reject({
@@ -149,6 +200,52 @@ class SSTableSegment {
         }
       });
     });
+  }
+
+  static findNearestKey(arr, key) {
+    let leftIndex = 0;
+    let rightIndex = arr.length - 1;
+    let wasKeyFound = false;
+    let foundKey;
+    let nearestLowerIndex;
+    let nearestHigherIndex;
+    let tempLowestDifference = Number.MAX_SAFE_INTEGER;
+    let tempHighestDifference = Number.MAX_SAFE_INTEGER;
+
+    while (rightIndex >= leftIndex) {
+      const pivotIndex = leftIndex + Math.floor((rightIndex - leftIndex) / 2);
+      const pivotElement = arr[pivotIndex];
+      const diff = Math.abs(pivotElement - key);
+
+      if (pivotElement ===  key) {
+        foundKey = key;
+        wasKeyFound = true;
+        break;
+      } else if (pivotElement > key) {
+        rightIndex = pivotIndex - 1;
+        if (diff < tempHighestDifference) {
+          nearestHigherIndex = pivotIndex;
+          tempHighestDifference = diff;
+        }
+      } else {
+        leftIndex = pivotIndex + 1;
+        if (diff < tempLowestDifference) {
+          nearestLowerIndex = pivotIndex;
+          tempLowestDifference = diff;
+        }
+      }
+    }
+
+    const result = {};
+
+    if (wasKeyFound) {
+      result.key = key;
+    } else {
+      result.nearestMinima = arr[nearestLowerIndex];
+      result.nearestMaxima = arr[nearestHigherIndex];
+    }
+
+    return result;
   }
 }
 
