@@ -24,29 +24,73 @@ class SSTableSegment {
   }
 
   get(key) {
-    const nearest = SSTableSegment.findNearestKey(this._indexedKeys, key);
+    return new Promise( (resolve, reject) => {
+      fs.open(this.getFileFullPath(), 'r', (err, fd) => {
+        fs.fstat(fd, async (err, stats) => {
+          if (err) {
+            reject(err);
+            return;
+          }
 
-    if (nearest.key) {
-      return this._getLogFromPositionRange(
-        this._index[nearest.key],
-        -1,
-        key
-      );
-    } else if (nearest.nearestMinima && !nearest.nearestMaxima) {
-      return this._getLogFromPositionRange(
-        this._index[nearest.nearestMinima],
-        -1,
-        key
-      );
-    } else if (nearest.nearestMinima && nearest.nearestMaxima) {
-      return this._getLogFromPositionRange(
-        this._index[nearest.nearestMinima],
-        this._index[nearest.nearestMaxima],
-        key
-      );
-    }
+          const nearest = SSTableSegment.findNearestKey(this._indexedKeys, key);
+          const result = {
+            key: key,
+            value: null
+          };
 
-    return null;
+          if (nearest.key) {
+            const { key, value, _ } = await this.readKeyValueFromPosition(
+              this._index[nearest.key],
+              fd,
+              stats.size
+            );
+
+            result.key = key;
+            result.value = value;
+          } else if (nearest.nearestMinima && !nearest.nearestMaxima) {
+            let position = this._index[nearest.nearestMinima];
+            while (position >= 0) {
+              const { key: resultKey, value, cursor }  = await this.readKeyValueFromPosition(
+                position,
+                fd,
+                stats.size
+              );
+
+              if (key === resultKey) {
+                result.key = key;
+                result.value = value;
+                position = -1;
+              } else {
+                position = cursor.nextPosition;
+              }
+            }
+          } else if (nearest.nearestMinima && nearest.nearestMaxima) {
+            let position = this._index[nearest.nearestMinima];
+            while (position >= 0) {
+              const { key: resultKey, value, cursor }  = await this.readKeyValueFromPosition(
+                position,
+                fd,
+                stats.size
+              );
+
+              if (key === resultKey) {
+                result.key = key;
+                result.value = value;
+                position = -1;
+              } else {
+                position = cursor.nextPosition;
+              }
+
+              if (position >= this._index[nearest.nearestMaxima]) {
+                position = -1;
+              }
+            }
+          }
+
+          resolve(result);
+        });
+      });
+    });
   }
 
   deleteFile() {
@@ -65,74 +109,60 @@ class SSTableSegment {
     return this._write(`${key}`, value);
   }
 
-  _getIndex() {
-    return this._index;
-  }
+  /**
+   * This function reads a log from the given position in the SSTableSegment file
+   * @param position - The position of the log to read
+   * @param fileDescriptor
+   * @param totalLengthOfContent - The total length of file content in bytes
+   * returns - object with key, value and a cursor which contains the next key's position if present
+   */
+  readKeyValueFromPosition(position, fileDescriptor, totalLengthOfContent) {
+    return new Promise((resolve) => {
+      const result = {
+        key: null,
+        value: null,
+        cursor: {
+          nextPosition: -1
+        }
+      };
 
-  _getLogFromPositionRange(fromPosition, toPosition, keyToSearch) {
-    return new Promise((resolve, reject) => {
-      fs.open(this.getFileFullPath(), 'r', (err, fd) => {
-        fs.fstat(fd, (err, stats) => {
-          if (err) {
-            reject(err);
-            return;
-          }
+      // The maximum length of a key:value pair will definitely be smaller than the SM_TABLE_MAX_SIZE_IN_BYTES
+      const lengthToRead = `${SM_TABLE_MAX_SIZE_IN_BYTES}`.length * 2;
 
-          if (toPosition < 0) toPosition = stats.size - 1;
+      const buffer = new Buffer(lengthToRead);
 
-          const lengthToBeRead = (toPosition - fromPosition + 1);
-          const buffer =  Buffer.alloc(lengthToBeRead);
-          const positionToBeReadFrom = fromPosition;
+      fs.readSync(fileDescriptor, buffer, 0, lengthToRead, position);
 
-          fs.readSync(fd, buffer, 0, lengthToBeRead, positionToBeReadFrom);
+      const logChunk = buffer.toString();
+      const indexOfFirstDelimiterInGivenChunk = logChunk.indexOf(":");
 
-          resolve(this._traverseAndGetLogForKey(buffer.toString(), keyToSearch));
-        });
-      });
-    })
-  };
+      if (indexOfFirstDelimiterInGivenChunk > -1) {
+        const lengthOfChunkTillFirstDelimiter = indexOfFirstDelimiterInGivenChunk + 1;
+        let lengthOfKeyValueInString = logChunk.substring(0, indexOfFirstDelimiterInGivenChunk);
+        const lengthOfKeyValue = parseInt(lengthOfKeyValueInString);
 
-  _traverseAndGetLogForKey(stringChunk, keyToSearch) {
-    let i = 0;
+        if (!isNaN(lengthOfKeyValue)) {
+          const lengthOfLog = lengthOfKeyValue + lengthOfChunkTillFirstDelimiter;
+          const logBuffer = new Buffer(lengthOfLog);
+          fs.readSync(fileDescriptor, logBuffer, 0, lengthOfLog, position);
 
-    while (i < stringChunk.length) {
-      let indexOfFirstDelimiterInGivenChunk = stringChunk.indexOf(":", i);
+          const logString = logBuffer.toString();
+          const [_, key, value] = logString.split(":");
 
-      if (indexOfFirstDelimiterInGivenChunk < 0) return null;
+          const nextPosition = position + lengthOfLog;
 
-      let bytesToCountInString = stringChunk.substring(i, indexOfFirstDelimiterInGivenChunk);
-
-      const bytesToCount = parseInt(bytesToCountInString);
-
-      if (isNaN(bytesToCount)) {
-        return null;
-      }
-
-      i = indexOfFirstDelimiterInGivenChunk;
-      i++;
-
-      const log = stringChunk.substring(i, (i + bytesToCount));
-      const {key, value} = this._parseLogToGetKeyAndValue(log);
-
-      if (key === keyToSearch) {
-        return {
-          key,
-          value
+          result.key = key;
+          result.value = value;
+          result.cursor.nextPosition = (nextPosition >= totalLengthOfContent) ? -1 : nextPosition;
         }
       }
 
-      i += bytesToCount;
-    }
-
-    return null;
+      resolve(result);
+    })
   }
 
-  _parseLogToGetKeyAndValue(log) {
-    const str = log.split(":");
-    return {
-      key: str[0],
-      value: str[1]
-    }
+  _getIndex() {
+    return this._index;
   }
 
   _shouldStoreLogInIndex() {

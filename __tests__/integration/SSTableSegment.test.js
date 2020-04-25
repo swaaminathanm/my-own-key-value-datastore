@@ -142,7 +142,7 @@ test('check get value return null if key not present', async () => {
   let key = "10";
   let result = await ssTableSegment.get(key);
 
-  expect(result).toBeNull();
+  expect(result.value).toBeNull();
 
   rimraf.sync(basePath);
 });

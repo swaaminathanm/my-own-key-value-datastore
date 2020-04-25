@@ -41,26 +41,34 @@ class RedBlackTree {
       y = x;
       if (z.key < x.key) {
         x = x.left
+      } else if (z.key === x.key) {
+        break;
       } else {
         x = x.right;
       }
     }
 
-    z.parent = y;
-
-    if (y === this.tree.nil) {
-      this.tree.root = z;
-    } else if (z.key < y.key) {
-      y.left = z;
+    if (z.key === y.key) {
+      // If there is a key already in the tree
+      // then update it with the new value
+      y.value = z.value;
     } else {
-      y.right = z;
+      z.parent = y;
+
+      if (y === this.tree.nil) {
+        this.tree.root = z;
+      } else if (z.key < y.key) {
+        y.left = z;
+      } else {
+        y.right = z;
+      }
+
+      z.left = this.tree.nil;
+      z.right = this.tree.nil;
+      z.color = RED;
+
+      this._insertFixup(z);
     }
-
-    z.left = this.tree.nil;
-    z.right = this.tree.nil;
-    z.color = RED;
-
-    this._insertFixup(z);
   }
 
   _insertFixup(z) {
