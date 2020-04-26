@@ -15,6 +15,10 @@ class SSTableSegment {
     this._indexBucket = -1;
   }
 
+  toString() {
+    return this.fileName;
+  }
+
   getFileFullPath() {
     return path.join(this.basePath, `${this.fileName}.${this.fileExtension}`);
   }
@@ -24,72 +28,51 @@ class SSTableSegment {
   }
 
   get(key) {
-    return new Promise( (resolve, reject) => {
-      fs.open(this.getFileFullPath(), 'r', (err, fd) => {
-        fs.fstat(fd, async (err, stats) => {
-          if (err) {
-            reject(err);
-            return;
-          }
+    return new Promise( async (resolve, reject) => {
+      const nearest = SSTableSegment.findNearestKey(this._indexedKeys, key);
+      const result = {
+        key: key,
+        value: null
+      };
 
-          const nearest = SSTableSegment.findNearestKey(this._indexedKeys, key);
-          const result = {
-            key: key,
-            value: null
-          };
+      if (nearest.key) {
+        const { key, value, _ } = await this.readKeyValueFromPosition(this._index[nearest.key]);
 
-          if (nearest.key) {
-            const { key, value, _ } = await this.readKeyValueFromPosition(
-              this._index[nearest.key],
-              fd,
-              stats.size
-            );
+        result.key = key;
+        result.value = value;
+      } else if (nearest.nearestMinima && !nearest.nearestMaxima) {
+        let position = this._index[nearest.nearestMinima];
+        while (position >= 0) {
+          const { key: resultKey, value, cursor }  = await this.readKeyValueFromPosition(position);
 
+          if (key === resultKey) {
             result.key = key;
             result.value = value;
-          } else if (nearest.nearestMinima && !nearest.nearestMaxima) {
-            let position = this._index[nearest.nearestMinima];
-            while (position >= 0) {
-              const { key: resultKey, value, cursor }  = await this.readKeyValueFromPosition(
-                position,
-                fd,
-                stats.size
-              );
+            position = -1;
+          } else {
+            position = cursor.nextPosition;
+          }
+        }
+      } else if (nearest.nearestMinima && nearest.nearestMaxima) {
+        let position = this._index[nearest.nearestMinima];
+        while (position >= 0) {
+          const { key: resultKey, value, cursor }  = await this.readKeyValueFromPosition(position);
 
-              if (key === resultKey) {
-                result.key = key;
-                result.value = value;
-                position = -1;
-              } else {
-                position = cursor.nextPosition;
-              }
-            }
-          } else if (nearest.nearestMinima && nearest.nearestMaxima) {
-            let position = this._index[nearest.nearestMinima];
-            while (position >= 0) {
-              const { key: resultKey, value, cursor }  = await this.readKeyValueFromPosition(
-                position,
-                fd,
-                stats.size
-              );
-
-              if (key === resultKey) {
-                result.key = key;
-                result.value = value;
-                position = -1;
-              } else {
-                position = cursor.nextPosition;
-              }
-
-              if (position >= this._index[nearest.nearestMaxima]) {
-                position = -1;
-              }
-            }
+          if (key === resultKey) {
+            result.key = key;
+            result.value = value;
+            position = -1;
+          } else {
+            position = cursor.nextPosition;
           }
 
-          resolve(result);
-        });
-      });
+          if (position >= this._index[nearest.nearestMaxima]) {
+            position = -1;
+          }
+        }
+      }
+
+      resolve(result);
     });
   }
 
@@ -109,6 +92,20 @@ class SSTableSegment {
     return this._write(`${key}`, value);
   }
 
+  readKeyValueFromPosition(position) {
+    return new Promise( (resolve, reject) => {
+      fs.open(this.getFileFullPath(), 'r', (err, fd) => {
+        fs.fstat(fd, async (err, stats) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(this._readKeyValueFromPosition(position, fd, stats.size));
+          }
+        });
+      });
+    });
+  }
+
   /**
    * This function reads a log from the given position in the SSTableSegment file
    * @param position - The position of the log to read
@@ -116,7 +113,7 @@ class SSTableSegment {
    * @param totalLengthOfContent - The total length of file content in bytes
    * returns - object with key, value and a cursor which contains the next key's position if present
    */
-  readKeyValueFromPosition(position, fileDescriptor, totalLengthOfContent) {
+  _readKeyValueFromPosition(position, fileDescriptor, totalLengthOfContent) {
     return new Promise((resolve) => {
       const result = {
         key: null,
