@@ -146,3 +146,13 @@ test('check get value return null if key not present', async () => {
 
   rimraf.sync(basePath);
 });
+
+test('should throw error if key is non-numeric', async () => {
+  const ssTableSegment = new SSTableSegment(basePath);
+
+  try {
+    await ssTableSegment.put("test", "test")
+  } catch(err) {
+    expect(err.message).toBe('Only numeric keys are accepted');
+  }
+});

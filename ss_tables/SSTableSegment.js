@@ -90,7 +90,11 @@ class SSTableSegment {
   }
 
   put(key, value) {
-    return this._write(`${key}`, value);
+    if (!isNaN(key)) {
+      return this._write(`${key}`, value);
+    }
+
+    throw new Error('Only numeric keys are accepted');
   }
 
   readKeyValueFromPosition(position) {
@@ -230,7 +234,6 @@ class SSTableSegment {
     });
   }
 
-  // TODO: Change this function to support string keys. Currently it only supports numeric keys
   static findNearestKey(arr, key) {
     let leftIndex = 0;
     let rightIndex = arr.length - 1;
