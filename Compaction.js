@@ -85,6 +85,8 @@ class Compaction {
         }
         map[key].push(i);
       });
+
+      return map;
     };
 
     let compactionMetaInfoObjects = initializeCompactionMetaInfo();
@@ -120,7 +122,7 @@ class Compaction {
 
       // Get changed compactionMetaInfo objects and increase their positions
       const keyMetaInfoObjectIndexMap = getKeyMetaInfoObjectIndexMap(compactionMetaInfoObjects);
-      metaObjectWithLowestKey[keyMetaInfoObjectIndexMap].forEach((metaInfoObjectIndex) => {
+      keyMetaInfoObjectIndexMap[metaObjectWithLowestKey.data.key].forEach((metaInfoObjectIndex) => {
         const metaInfoObject = compactionMetaInfoObjects[metaInfoObjectIndex];
         metaInfoObject.position = metaInfoObject.data.cursor.nextPosition;
       });

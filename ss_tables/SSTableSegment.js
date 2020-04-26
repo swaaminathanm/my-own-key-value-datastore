@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const uuidv4 = require('uuid/v4');
 
 const {FS_OPEN_ERROR, FS_WRITE_ERROR, FILE_FULL_ERROR} = require('../errors');
 const {SM_TABLE_MAX_SIZE_IN_BYTES, SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES} = require('../config');
@@ -7,7 +8,7 @@ const {SM_TABLE_MAX_SIZE_IN_BYTES, SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTE
 class SSTableSegment {
   constructor(basePath) {
     this.basePath = basePath;
-    this.fileName = new Date().getTime();
+    this.fileName = uuidv4();
     this.fileExtension = "txt";
     this._position = 0;
     this._index = {};
@@ -229,6 +230,7 @@ class SSTableSegment {
     });
   }
 
+  // TODO: Change this function to support string keys. Currently it only supports numeric keys
   static findNearestKey(arr, key) {
     let leftIndex = 0;
     let rightIndex = arr.length - 1;
