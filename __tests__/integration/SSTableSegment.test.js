@@ -18,7 +18,7 @@ const makeRandomValue = (length) => {
 };
 
 test('check if file path is correct', () => {
-  const ssTableSegment = new SSTableSegment(basePath);
+  const ssTableSegment = new SSTableSegment(basePath, 1000000, 1000);
 
   expect(ssTableSegment.getFileFullPath())
     .toBe(`${basePath}/${ssTableSegment.fileName}.${ssTableSegment.fileExtension}`);
@@ -29,7 +29,7 @@ test('check if write is possible until threshold is reached', async () => {
     fs.mkdirSync(basePath);
   }
 
-  const ssTableSegment = new SSTableSegment(basePath);
+  const ssTableSegment = new SSTableSegment(basePath, 1000000, 1000);
 
   const N = 1000;
   for(let i=0;i<N;i++) {
@@ -73,7 +73,7 @@ test('check get value of key that is present in range of internal index', async 
     fs.mkdirSync(basePath);
   }
 
-  const ssTableSegment = new SSTableSegment(basePath);
+  const ssTableSegment = new SSTableSegment(basePath, 1000000, 1000);
 
   const dummyDb = {};
   const N = 250;
@@ -104,7 +104,7 @@ test('check get value of key that is present exactly in internal index', async (
     fs.mkdirSync(basePath);
   }
 
-  const ssTableSegment = new SSTableSegment(basePath);
+  const ssTableSegment = new SSTableSegment(basePath, 1000000, 1000);
 
   const dummyDb = {};
   const N = 10;
@@ -129,7 +129,7 @@ test('check get value return null if key not present', async () => {
     fs.mkdirSync(basePath);
   }
 
-  const ssTableSegment = new SSTableSegment(basePath);
+  const ssTableSegment = new SSTableSegment(basePath, 1000000, 1000);
 
   const dummyDb = {};
   const N = 10;
@@ -149,7 +149,7 @@ test('check get value return null if key not present', async () => {
 });
 
 test('should throw error if key is non-numeric', async () => {
-  const ssTableSegment = new SSTableSegment(basePath);
+  const ssTableSegment = new SSTableSegment(basePath, 1000000, 1000);
 
   try {
     await ssTableSegment.put("test", "test")

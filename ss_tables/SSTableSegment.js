@@ -3,10 +3,9 @@ const path = require('path');
 const uuidv4 = require('uuid/v4');
 
 const {FS_OPEN_ERROR, FS_WRITE_ERROR, FILE_FULL_ERROR, ONLY_NUMERIC_KEYS_ACCEPTED} = require('../errors');
-const {SM_TABLE_MAX_SIZE_IN_BYTES, SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES} = require('../config');
 
 class SSTableSegment {
-  constructor(basePath) {
+  constructor(basePath, SM_TABLE_MAX_SIZE_IN_BYTES, SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES) {
     this.basePath = basePath;
     this.fileName = uuidv4();
     this.fileExtension = "txt";
@@ -14,6 +13,8 @@ class SSTableSegment {
     this._index = {};
     this._indexedKeys = [];
     this._indexBucket = -1;
+    this.SM_TABLE_MAX_SIZE_IN_BYTES = SM_TABLE_MAX_SIZE_IN_BYTES;
+    this.SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES = SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES;
   }
 
   toString() {
@@ -25,7 +26,7 @@ class SSTableSegment {
   }
 
   canWrite() {
-    return this._position <= SM_TABLE_MAX_SIZE_IN_BYTES;
+    return this._position <= this.SM_TABLE_MAX_SIZE_IN_BYTES;
   }
 
   get(key) {
@@ -134,7 +135,7 @@ class SSTableSegment {
       };
 
       // The maximum length of a key:value pair will definitely be smaller than the SM_TABLE_MAX_SIZE_IN_BYTES
-      const lengthToRead = `${SM_TABLE_MAX_SIZE_IN_BYTES}`.length * 2;
+      const lengthToRead = `${this.SM_TABLE_MAX_SIZE_IN_BYTES}`.length * 2;
 
       const buffer = new Buffer(lengthToRead);
 
@@ -173,7 +174,7 @@ class SSTableSegment {
   }
 
   _shouldStoreLogInIndex() {
-    const indexBucket = Math.floor(this._position/SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES);
+    const indexBucket = Math.floor(this._position/this.SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES);
     if (indexBucket !== this._indexBucket) {
       this._indexBucket = indexBucket;
       return true;

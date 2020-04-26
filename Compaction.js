@@ -6,10 +6,17 @@ class Compaction {
    *
    * @param ssTableSegments - Array of SSTableSegment objects in descending order (latest file first)
    * @param basePath - The base path for the new SSTableSegment file that will be created after compaction process
+   * @param SM_TABLE_MAX_SIZE_IN_BYTES - Maximum size of new SSTableSegment file in bytes
+   * @param SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES - Maximum sparse space for in-memory index of new SSTableSegment
    */
-  constructor(ssTableSegments, basePath) {
+  constructor(
+    ssTableSegments,
+    basePath,
+    SM_TABLE_MAX_SIZE_IN_BYTES,
+    SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES
+  ) {
     this._ssTableSegmentsToCompact = ssTableSegments;
-    this.ssTableSegment = new SSTableSegment(basePath);
+    this.ssTableSegment = new SSTableSegment(basePath, SM_TABLE_MAX_SIZE_IN_BYTES, SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES);
   }
 
   getSSTableSegment() {
