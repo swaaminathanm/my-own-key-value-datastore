@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const uuidv4 = require('uuid/v4');
 
-const {FS_OPEN_ERROR, FS_WRITE_ERROR, FILE_FULL_ERROR} = require('../errors');
+const {FS_OPEN_ERROR, FS_WRITE_ERROR, FILE_FULL_ERROR, ONLY_NUMERIC_KEYS_ACCEPTED} = require('../errors');
 const {SM_TABLE_MAX_SIZE_IN_BYTES, SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES} = require('../config');
 
 class SSTableSegment {
@@ -94,7 +94,12 @@ class SSTableSegment {
       return this._write(`${key}`, value);
     }
 
-    throw new Error('Only numeric keys are accepted');
+    throw {
+      code: ONLY_NUMERIC_KEYS_ACCEPTED,
+      error: {
+        message: 'Only numeric keys are accepted'
+      }
+    };
   }
 
   readKeyValueFromPosition(position) {

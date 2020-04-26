@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const rimraf = require("rimraf");
 
+const {ONLY_NUMERIC_KEYS_ACCEPTED} = require('../../errors');
 const SSTableSegment = require('../../ss_tables/SSTableSegment');
 
 const basePath = path.join(__dirname, 'example');
@@ -153,6 +154,7 @@ test('should throw error if key is non-numeric', async () => {
   try {
     await ssTableSegment.put("test", "test")
   } catch(err) {
-    expect(err.message).toBe('Only numeric keys are accepted');
+    expect(err.code).toBe(ONLY_NUMERIC_KEYS_ACCEPTED);
+    expect(err.error.message).toBe('Only numeric keys are accepted');
   }
 });
