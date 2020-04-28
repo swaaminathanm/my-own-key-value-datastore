@@ -1,4 +1,4 @@
-const {BLACK, RED, TOTAL_MEMTABLE_NODES_ACCEPTABLE} = require('./config');
+const {BLACK, RED} = require('./config');
 
 class Node {
   constructor(key, value, color = RED) {
@@ -19,9 +19,10 @@ class Tree {
 }
 
 class RedBlackTree {
-  constructor() {
+  constructor(TOTAL_MEMTABLE_NODES_ACCEPTABLE) {
     this.tree = new Tree();
     this.treeNodesCount = 0;
+    this.TOTAL_MEMTABLE_NODES_ACCEPTABLE = TOTAL_MEMTABLE_NODES_ACCEPTABLE;
   }
 
   insert(key, value) {
@@ -29,8 +30,33 @@ class RedBlackTree {
     this.treeNodesCount++;
   }
 
-  isAvailable() {
-    return this.treeNodesCount < TOTAL_MEMTABLE_NODES_ACCEPTABLE;
+  /**
+   * This function removes the lowest value from the tree
+   */
+  removeLowest() {
+    this.treeNodesCount--;
+  }
+
+  get(key) {
+    let x = this.tree.root;
+    let value;
+
+    while (x !== this.tree.nil) {
+      if (key < x.key) {
+        x = x.left
+      } else if (key === x.key) {
+        value = x.value;
+        break;
+      } else {
+        x = x.right;
+      }
+    }
+
+    return value;
+  }
+
+  canAccept() {
+    return this.treeNodesCount < this.TOTAL_MEMTABLE_NODES_ACCEPTABLE;
   }
 
   _insert(z) {
@@ -156,11 +182,20 @@ class RedBlackTree {
     x.parent = y;
   }
 
-  getValues(node, arr) {
+  getValues() {
+    const arr = [];
+    this._getValues(this.tree.root, arr);
+    return arr;
+  }
+
+  _getValues(node, arr) {
     if (node !== this.tree.nil) {
-      this.getValues(node.left, arr);
-      arr.push(node);
-      this.getValues(node.right, arr);
+      this._getValues(node.left, arr);
+      arr.push({
+        key: node.key,
+        value: node.value
+      });
+      this._getValues(node.right, arr);
     }
   }
 

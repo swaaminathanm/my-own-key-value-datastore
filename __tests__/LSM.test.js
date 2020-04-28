@@ -1,6 +1,13 @@
+const path = require('path');
+
 const LSM = require('../LSM');
 
+jest.mock('../ss_tables/SSTableSegment');
+
 describe('LSM', () => {
+  let lsm;
+  const basePath = path.join(__dirname, 'example');
+
   const fakeLogger = {
     addToLog: jest.fn(),
     isEmpty: jest.fn(),
@@ -9,7 +16,9 @@ describe('LSM', () => {
 
   const fakeMemTable = {
     insert: jest.fn(),
-    isAvailable: jest.fn()
+    canAccept: jest.fn(),
+    getValues: jest.fn(),
+    removeLowest: jest.fn()
   };
 
   beforeEach(() => {
@@ -22,7 +31,7 @@ describe('LSM', () => {
   });
 
   it('should log data when put is called', () => {
-    let lsm = new LSM(fakeLogger, fakeMemTable);
+    lsm = new LSM(basePath, fakeLogger, fakeMemTable, 10, 5);
 
     lsm.put(1, 'sample value');
 
@@ -35,7 +44,7 @@ describe('LSM', () => {
   });
 
   it('should insert into memtable', () => {
-    let lsm = new LSM(fakeLogger, fakeMemTable);
+    lsm = new LSM(basePath, fakeLogger, fakeMemTable, 10, 5);
 
     const fakeLog1 = JSON.stringify({
       key: 1,
@@ -48,7 +57,7 @@ describe('LSM', () => {
     });
 
     fakeLogger.isEmpty.mockReturnValue(false);
-    fakeMemTable.isAvailable.mockReturnValue(true);
+    fakeMemTable.canAccept.mockReturnValue(true);
     fakeLogger.drain.mockReturnValue([
       fakeLog1,
       fakeLog2
@@ -65,20 +74,9 @@ describe('LSM', () => {
   });
 
   it('should not insert into memtable if logger is empty', () => {
-    let lsm = new LSM(fakeLogger, fakeMemTable);
+    lsm = new LSM(basePath, fakeLogger, fakeMemTable, 10, 5);
 
     fakeLogger.isEmpty.mockReturnValue(true);
-
-    jest.advanceTimersByTime(1000);
-
-    expect(fakeMemTable.insert).toHaveBeenCalledTimes(0);
-  });
-
-  it('should not insert into memtable if memtable is not available', () => {
-    let lsm = new LSM(fakeLogger, fakeMemTable);
-
-    fakeLogger.isEmpty.mockReturnValue(false);
-    fakeMemTable.isAvailable.mockReturnValue(false);
 
     jest.advanceTimersByTime(1000);
 

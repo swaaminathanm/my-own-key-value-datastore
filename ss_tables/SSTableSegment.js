@@ -2,10 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const uuidv4 = require('uuid/v4');
 
-const {FS_OPEN_ERROR, FS_WRITE_ERROR, FILE_FULL_ERROR, ONLY_NUMERIC_KEYS_ACCEPTED} = require('../errors');
+const {FS_OPEN_ERROR, FS_WRITE_ERROR, ONLY_NUMERIC_KEYS_ACCEPTED} = require('../errors');
 
 class SSTableSegment {
-  constructor(basePath, SM_TABLE_MAX_SIZE_IN_BYTES, SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES) {
+  constructor(
+    basePath,
+    SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES,
+    SM_TABLE_MAX_SIZE_IN_BYTES
+  ) {
     this.basePath = basePath;
     this.fileName = uuidv4();
     this.fileExtension = "txt";
@@ -14,7 +18,7 @@ class SSTableSegment {
     this._indexedKeys = [];
     this._indexBucket = -1;
     this.SM_TABLE_MAX_SIZE_IN_BYTES = SM_TABLE_MAX_SIZE_IN_BYTES;
-    this.SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES = SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES;
+    this.SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES = SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES;
   }
 
   toString() {
@@ -26,7 +30,7 @@ class SSTableSegment {
   }
 
   canWrite() {
-    return this._position <= this.SM_TABLE_MAX_SIZE_IN_BYTES;
+    return this._position < this.SM_TABLE_MAX_SIZE_IN_BYTES;
   }
 
   get(key) {
@@ -174,7 +178,7 @@ class SSTableSegment {
   }
 
   _shouldStoreLogInIndex() {
-    const indexBucket = Math.floor(this._position/this.SM_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES);
+    const indexBucket = Math.floor(this._position/this.SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES);
     if (indexBucket !== this._indexBucket) {
       this._indexBucket = indexBucket;
       return true;
@@ -199,12 +203,6 @@ class SSTableSegment {
   */
   _write(key, value) {
     return new Promise((resolve, reject) => {
-      if (!this.canWrite()) {
-        reject({
-          code: FILE_FULL_ERROR
-        });
-      }
-
       const logLength = `${key}:${value}`.length;
       const logToWrite = `${logLength}:${key}:${value}`;
       const bufferToWrite = Buffer.from(logToWrite);

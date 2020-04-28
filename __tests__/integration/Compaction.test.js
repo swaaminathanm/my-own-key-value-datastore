@@ -16,16 +16,16 @@ describe('Compaction Tests', () => {
       fs.mkdirSync(basePath);
     }
 
-    let ssTableSegment1 = new SSTableSegment(basePath, 1000000, 1000);
+    let ssTableSegment1 = new SSTableSegment(basePath, 1000);
     await ssTableSegment1.put("1", "A");
     await ssTableSegment1.put("2", "B");
     await ssTableSegment1.put("3", "C");
 
-    let ssTableSegment2 = new SSTableSegment(basePath, 1000000, 1000);
+    let ssTableSegment2 = new SSTableSegment(basePath, 1000);
     await ssTableSegment2.put("2", "D");
     await ssTableSegment2.put("3", "E");
 
-    let ssTableSegment3 = new SSTableSegment(basePath, 1000000, 1000);
+    let ssTableSegment3 = new SSTableSegment(basePath, 1000);
     await ssTableSegment3.put("1", "F");
     await ssTableSegment3.put("2", "G");
 
@@ -33,7 +33,7 @@ describe('Compaction Tests', () => {
     ssTableSegments.push(ssTableSegment2);
     ssTableSegments.push(ssTableSegment1);
 
-    compaction = new Compaction(ssTableSegments, basePath, 1000000, 1000);
+    compaction = new Compaction(ssTableSegments, basePath, 1000);
   });
 
   afterAll(() => {
