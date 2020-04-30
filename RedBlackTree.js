@@ -1,4 +1,7 @@
-const {BLACK, RED} = require('./config');
+const {ONLY_NUMERIC_KEYS_ACCEPTED} = require('./errors');
+
+const RED = 'red';
+const BLACK = 'black';
 
 class Node {
   constructor(key, value, color = RED) {
@@ -18,6 +21,10 @@ class Tree {
   }
 }
 
+/**
+ * Criteria:
+ * + Only numeric keys are allowed
+ */
 class RedBlackTree {
   constructor(TOTAL_MEMTABLE_NODES_ACCEPTABLE) {
     this.tree = new Tree();
@@ -26,15 +33,17 @@ class RedBlackTree {
   }
 
   insert(key, value) {
-    this._insert(new Node(key, value));
-    this.treeNodesCount++;
-  }
-
-  /**
-   * This function removes the lowest value from the tree
-   */
-  removeLowest() {
-    this.treeNodesCount--;
+    if (!isNaN(key)) {
+      this._insert(new Node(key, value));
+      this.treeNodesCount++;
+    } else {
+      throw {
+        code: ONLY_NUMERIC_KEYS_ACCEPTED,
+        error: {
+          message: 'Only numeric keys are accepted'
+        }
+      };
+    }
   }
 
   get(key) {
@@ -180,6 +189,10 @@ class RedBlackTree {
 
     y.left = x;
     x.parent = y;
+  }
+
+  traverse(cb) {
+
   }
 
   getValues() {

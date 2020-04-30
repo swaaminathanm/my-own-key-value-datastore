@@ -1,14 +1,20 @@
 const fs = require('fs');
 const path = require('path');
-const uuidv4 = require('uuid/v4');
+const uuid = require('uuid');
+
+const uuidv4 = uuid.v4;
 
 const {FS_OPEN_ERROR, FS_WRITE_ERROR, ONLY_NUMERIC_KEYS_ACCEPTED} = require('../errors');
 
+/**
+ * Criteria:
+ * + Keys should be passed in ascending order (should not call put with random ordering of keys)
+ * + Only numeric keys are allowed
+ */
 class SSTableSegment {
   constructor(
     basePath,
-    SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES,
-    SM_TABLE_MAX_SIZE_IN_BYTES
+    SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES
   ) {
     this.basePath = basePath;
     this.fileName = uuidv4();
@@ -17,7 +23,6 @@ class SSTableSegment {
     this._index = {};
     this._indexedKeys = [];
     this._indexBucket = -1;
-    this.SM_TABLE_MAX_SIZE_IN_BYTES = SM_TABLE_MAX_SIZE_IN_BYTES;
     this.SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES = SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES;
   }
 
@@ -29,47 +34,37 @@ class SSTableSegment {
     return path.join(this.basePath, `${this.fileName}.${this.fileExtension}`);
   }
 
-  canWrite() {
-    return this._position < this.SM_TABLE_MAX_SIZE_IN_BYTES;
-  }
-
   get(key) {
-    return new Promise( async (resolve, reject) => {
-      const nearest = SSTableSegment.findNearestKey(this._indexedKeys, key);
-      const result = {
-        key: key,
-        value: null
-      };
+    return new Promise( async (resolve) => {
+      const nearest = SSTableSegment._findNearestKey(this._indexedKeys, key);
+      let value = null;
 
-      if (nearest.key) {
-        const { key, value, _ } = await this.readKeyValueFromPosition(this._index[nearest.key]);
+      if (nearest.key === 0 || nearest.key) {
+        const result = await this.readKeyValueFromPosition(this._index[nearest.key]);
 
-        result.key = key;
-        result.value = value;
+        value = result.value;
       } else if (nearest.nearestMinima && !nearest.nearestMaxima) {
         let position = this._index[nearest.nearestMinima];
         while (position >= 0) {
-          const { key: resultKey, value, cursor }  = await this.readKeyValueFromPosition(position);
+          const result  = await this.readKeyValueFromPosition(position);
 
-          if (key === resultKey) {
-            result.key = key;
-            result.value = value;
+          if (key == result.key) {
+            value = result.value;
             position = -1;
           } else {
-            position = cursor.nextPosition;
+            position = result.cursor.nextPosition;
           }
         }
       } else if (nearest.nearestMinima && nearest.nearestMaxima) {
         let position = this._index[nearest.nearestMinima];
         while (position >= 0) {
-          const { key: resultKey, value, cursor }  = await this.readKeyValueFromPosition(position);
+          const result  = await this.readKeyValueFromPosition(position);
 
-          if (key === resultKey) {
-            result.key = key;
-            result.value = value;
+          if (key == result.key) {
+            value = result.value;
             position = -1;
           } else {
-            position = cursor.nextPosition;
+            position = result.cursor.nextPosition;
           }
 
           if (position >= this._index[nearest.nearestMaxima]) {
@@ -78,7 +73,7 @@ class SSTableSegment {
         }
       }
 
-      resolve(result);
+      resolve(value);
     });
   }
 
@@ -96,7 +91,7 @@ class SSTableSegment {
 
   put(key, value) {
     if (!isNaN(key)) {
-      return this._write(`${key}`, value);
+      return this._write(key, value);
     }
 
     throw {
@@ -141,7 +136,7 @@ class SSTableSegment {
       // The maximum length of a key:value pair will definitely be smaller than the SM_TABLE_MAX_SIZE_IN_BYTES
       const lengthToRead = `${this.SM_TABLE_MAX_SIZE_IN_BYTES}`.length * 2;
 
-      const buffer = new Buffer(lengthToRead);
+      const buffer = Buffer.alloc(lengthToRead);
 
       fs.readSync(fileDescriptor, buffer, 0, lengthToRead, position);
 
@@ -155,7 +150,7 @@ class SSTableSegment {
 
         if (!isNaN(lengthOfKeyValue)) {
           const lengthOfLog = lengthOfKeyValue + lengthOfChunkTillFirstDelimiter;
-          const logBuffer = new Buffer(lengthOfLog);
+          const logBuffer = Buffer.alloc(lengthOfLog);
           fs.readSync(fileDescriptor, logBuffer, 0, lengthOfLog, position);
 
           const logString = logBuffer.toString();
@@ -238,7 +233,7 @@ class SSTableSegment {
     });
   }
 
-  static findNearestKey(arr, key) {
+  static _findNearestKey(arr, key) {
     let leftIndex = 0;
     let rightIndex = arr.length - 1;
     let wasKeyFound = false;

@@ -2,158 +2,127 @@ const path = require('path');
 const fs = require('fs');
 const rimraf = require("rimraf");
 
-const {ONLY_NUMERIC_KEYS_ACCEPTED} = require('../../errors');
 const SSTableSegment = require('../../ss_tables/SSTableSegment');
+const {hashCode} = require('../../utils');
 
-const basePath = path.join(__dirname, 'example');
+const {ONLY_NUMERIC_KEYS_ACCEPTED} = require("../../errors");
 
-const makeRandomValue = (length) => {
-  let result           = '';
-  const characters       = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  const charactersLength = characters.length;
-  for (let i = 0; i < length; i++) {
-    result += characters.charAt(Math.floor(Math.random() * charactersLength));
-  }
-  return result;
-};
+describe('Test SSTableSegment', () => {
+  const basePath = path.join(__dirname, 'example');
 
-test('check if file path is correct', () => {
-  const ssTableSegment = new SSTableSegment(basePath, 1000, 10000);
+  const makeRandomValue = (length) => {
+    let result           = '';
+    const characters       = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const charactersLength = characters.length;
+    for (let i = 0; i < length; i++) {
+      result += characters.charAt(Math.floor(Math.random() * charactersLength));
+    }
+    return result;
+  };
 
-  expect(ssTableSegment.getFileFullPath())
-    .toBe(`${basePath}/${ssTableSegment.fileName}.${ssTableSegment.fileExtension}`);
-});
+  const hashKey = (key) => hashCode(`${key}`);
 
-test('check if write is possible until threshold is reached', async () => {
-  if (!fs.existsSync(basePath)){
-    fs.mkdirSync(basePath);
-  }
+  beforeAll(() => {
+    if (!fs.existsSync(basePath)){
+      fs.mkdirSync(basePath);
+    }
+  });
 
-  const ssTableSegment = new SSTableSegment(basePath, 1000, 10000);
+  afterAll(() => {
+    rimraf.sync(basePath);
+  });
 
-  const N = 1000;
-  for(let i=0;i<N;i++) {
-    const key = Math.floor(9 + Math.random() * 90);
-    const value = makeRandomValue(5);
-    await ssTableSegment.put(key, value);
-  }
+  describe('Integer Keys', () => {
+    const dummyDb = {};
+    const ssTableSegment = new SSTableSegment(basePath, 100);
 
-  expect(Object.keys(ssTableSegment._getIndex()).length).toBeGreaterThanOrEqual(8);
-  expect(Object.keys(ssTableSegment._getIndex()).length).toBeLessThanOrEqual(10);
+    beforeAll(async () => {
+      const N = 50;
+      for(let i=0;i<N;i++) {
+        const key = hashKey(i);
+        const value = makeRandomValue(5);
+        dummyDb[key] = value;
+        await ssTableSegment.put(key, value);
+      }
+    });
 
-  rimraf.sync(basePath);
-});
+    it('should correct file path', () => {
+      expect(ssTableSegment.getFileFullPath())
+        .toBe(`${basePath}/${ssTableSegment.fileName}.${ssTableSegment.fileExtension}`);
+    });
 
-test('check if findNearestKey function is working properly', () => {
-  let arr = [2, 5, 8, 12, 16, 23, 38, 56, 72, 91];
-  let result;
+    it('should get value of key that is present in range of internal index', async () => {
+      const key = hashKey(45);
+      const value = await ssTableSegment.get(key);
 
-  result = SSTableSegment.findNearestKey(arr, 23);
-  expect(result.key).toBe(23);
+      expect(value).toBe(dummyDb[key]);
+    });
 
-  result = SSTableSegment.findNearestKey(arr, 21);
-  expect(result.nearestMinima).toBe(16);
-  expect(result.nearestMaxima).toBe(23);
+    it('should get value of key that is preset in internal index', async () => {
+      const key = hashKey(0);
+      const value = await ssTableSegment.get(key);
 
-  result = SSTableSegment.findNearestKey(arr, 91);
-  expect(result.key).toBe(91);
+      expect(value).toBe(dummyDb[key]);
+    });
 
-  result = SSTableSegment.findNearestKey(arr, 99);
-  expect(result.nearestMinima).toBe(91);
-  expect(result.nearestMaxima).toBe(undefined);
+    it('should return null if key is not present', async () => {
+      let key = hashKey(51);
+      let value = await ssTableSegment.get(key);
 
-  result = SSTableSegment.findNearestKey(arr, 0);
-  expect(result.nearestMinima).toBe(undefined);
-  expect(result.nearestMaxima).toBe(2);
-});
+      expect(value).toBeNull();
+    });
+  });
 
-test('check get value of key that is present in range of internal index', async () => {
-  if (!fs.existsSync(basePath)){
-    fs.mkdirSync(basePath);
-  }
+  describe('String Keys', () => {
+    const dummyDb = {};
+    const ssTableSegment = new SSTableSegment(basePath, 100);
 
-  const ssTableSegment = new SSTableSegment(basePath, 1000, 10000);
+    beforeAll(async () => {
+      const N = 50;
+      const tempKeys = [];
+      for(let i=0;i<N;i++) {
+        const randomValue = hashKey(makeRandomValue(5));
+        dummyDb[randomValue] = makeRandomValue(5);
+        tempKeys.push(randomValue);
+      }
 
-  const dummyDb = {};
-  const N = 250;
-  for(let i=0;i<N;i++) {
-    const key = Math.floor(i);
-    const value = makeRandomValue(5);
-    dummyDb[i] = value;
-    await ssTableSegment.put(key, value);
-  }
+      tempKeys.sort((a, b) => a - b);
 
-  let key = "150";
-  let result = await ssTableSegment.get(key);
+      for(let i=0; i<tempKeys.length; i++) {
+        const key = tempKeys[i];
+        await ssTableSegment.put(key, dummyDb[key]);
+      }
+    });
 
-  expect(result.key).toBe(key);
-  expect(result.value).toBe(dummyDb[key]);
+    it('should get value of key', async () => {
+      const key = Object.keys(dummyDb)[0];
+      const value = await ssTableSegment.get(key);
+      expect(value).toBe(dummyDb[key]);
+    });
 
-  key = "249";
-  result = await ssTableSegment.get(key);
+    it('should get value of key that is present in range of internal index', async () => {
+      const key = Object.keys(dummyDb)[45];
+      const value = await ssTableSegment.get(key);
 
-  expect(result.key).toBe(key);
-  expect(result.value).toBe(dummyDb[key]);
+      expect(value).toBe(dummyDb[key]);
+    });
 
-  rimraf.sync(basePath);
-});
+    it('should return null if key is not present', async () => {
+      const key = Object.keys(dummyDb)[45] + "sample-random-hash";
+      let value = await ssTableSegment.get(key);
 
-test('check get value of key that is present exactly in internal index', async () => {
-  if (!fs.existsSync(basePath)){
-    fs.mkdirSync(basePath);
-  }
+      expect(value).toBeNull();
+    });
+  });
 
-  const ssTableSegment = new SSTableSegment(basePath, 1000, 10000);
+  test('should throw error if key is non-numeric', async () => {
+    const ssTableSegment = new SSTableSegment(basePath, 1000);
 
-  const dummyDb = {};
-  const N = 10;
-  for(let i=0;i<N;i++) {
-    const key = Math.floor(i);
-    const value = makeRandomValue(5);
-    dummyDb[i] = value;
-    await ssTableSegment.put(key, value);
-  }
-
-  let key = "0";
-  let result = await ssTableSegment.get(key);
-
-  expect(result.key).toBe(key);
-  expect(result.value).toBe(dummyDb[key]);
-
-  rimraf.sync(basePath);
-});
-
-test('check get value return null if key not present', async () => {
-  if (!fs.existsSync(basePath)){
-    fs.mkdirSync(basePath);
-  }
-
-  const ssTableSegment = new SSTableSegment(basePath, 1000, 10000);
-
-  const dummyDb = {};
-  const N = 10;
-  for(let i=0;i<N;i++) {
-    const key = Math.floor(i);
-    const value = makeRandomValue(5);
-    dummyDb[i] = value;
-    await ssTableSegment.put(key, value);
-  }
-
-  let key = "10";
-  let result = await ssTableSegment.get(key);
-
-  expect(result.value).toBeNull();
-
-  rimraf.sync(basePath);
-});
-
-test('should throw error if key is non-numeric', async () => {
-  const ssTableSegment = new SSTableSegment(basePath, 1000, 10000);
-
-  try {
-    await ssTableSegment.put("test", "test")
-  } catch(err) {
-    expect(err.code).toBe(ONLY_NUMERIC_KEYS_ACCEPTED);
-    expect(err.error.message).toBe('Only numeric keys are accepted');
-  }
+    try {
+      await ssTableSegment.put("test", "test")
+    } catch(err) {
+      expect(err.code).toBe(ONLY_NUMERIC_KEYS_ACCEPTED);
+      expect(err.error.message).toBe('Only numeric keys are accepted');
+    }
+  });
 });

@@ -1,49 +1,50 @@
 const SSTableSegment = require('./ss_tables/SSTableSegment');
 const Compaction = require('./Compaction');
+const RedBlackTree = require('./RedBlackTree');
+const {hashCode} = require('./utils');
+const {
+  TOTAL_MEMTABLE_NODES_ACCEPTABLE,
+  SM_TABLE_MAX_SIZE_IN_BYTES,
+  SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES,
+  COMPACTION_THRESHOLD
+} = require('./config');
+const {INTERNAL_ERROR} = require('./errors');
 
 class LSM {
   constructor(
-    dirPathToCreateSSTables,
-    logger,
-    memTable,
-    SM_TABLE_MAX_SIZE_IN_BYTES,
-    SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES,
-    COMPACTION_THRESHOLD
+    dirPathToCreateSSTables
   ) {
-    this._logger = logger;
-    this._memTable = memTable;
+    this._memTableStack = [new RedBlackTree(TOTAL_MEMTABLE_NODES_ACCEPTABLE)];
     this._canDoCompaction = true;
+    this._canDoMemtableDrain = true;
     this._compactionBucket = [];
     this._ssTablesBucket = [];
     this._dirPathToCreateSSTables = dirPathToCreateSSTables;
-    this.SM_TABLE_MAX_SIZE_IN_BYTES = SM_TABLE_MAX_SIZE_IN_BYTES;
-    this.SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES = SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES;
-    this.COMPACTION_THRESHOLD = COMPACTION_THRESHOLD;
 
-    this._updateMemTable = this._updateMemTable.bind(this);
+    this._drainMemTable = this._drainMemTable.bind(this);
     this._insertIntoMemTable = this._insertIntoMemTable.bind(this);
     this._doCompaction = this._doCompaction.bind(this);
 
-    this._updateMemtableIntervalId = setInterval(this._updateMemTable, 1000);
+    this._updateMemtableIntervalId = setInterval(this._drainMemTable, 1000);
     this._doCompactionIntervalId = setInterval(this._doCompaction, 10000);
   }
 
   async _doCompaction() {
-    if (!this._canDoCompaction && this._ssTablesBucket.length < this.COMPACTION_THRESHOLD) {
+    if (!this._canDoCompaction || this._ssTablesBucket.length < COMPACTION_THRESHOLD) {
       return;
     }
 
     this._canDoCompaction = false;
 
     // pop out the initially added files into _compactionBucket
-    for (let i=0; i<this.COMPACTION_THRESHOLD; i++) {
+    for (let i=0; i<COMPACTION_THRESHOLD; i++) {
       this._compactionBucket.push(this._ssTablesBucket.shift());
     }
 
     const compaction = new Compaction(
       this._compactionBucket,
       this._dirPathToCreateSSTables,
-      this.SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES
+      SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES
     );
 
     const newSSTableSegment = await compaction.doCompaction();
@@ -57,70 +58,102 @@ class LSM {
     this._canDoCompaction = true;
   }
 
-  async _updateMemTable() {
-    if (this._logger.isEmpty()) {
+  async _drainMemTable() {
+    if (!this._canDoMemtableDrain) {
       return;
     }
 
-    const logs = this._logger.drain();
-    logs.forEach(this._insertIntoMemTable);
+    // Since memtable drain is happening we cannot accept another drain request until this finishes
+    this._canDoMemtableDrain = false;
 
-    while(!this._memTable.canAccept) {
-      const toRemove = this._memTable.removeLowest();
+    // push new memtable to stack so that new logs are stored in this memtable
+    this._memTableStack.push(new RedBlackTree());
 
-      if (toRemove.key && toRemove.value) {
-        let lastSSTableSegment = this._ssTablesBucket[this._ssTablesBucket.length - 1];
+    // remove the old memtable that should be drained
+    const memTable = this._memTableStack.shift();
 
-        if (!lastSSTableSegment || !lastSSTableSegment.canWrite()) {
-          const ssTableSegment = new SSTableSegment(
-            this._dirPathToCreateSSTables,
-            this.SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES,
-            this.SM_TABLE_MAX_SIZE_IN_BYTES
-          );
-          this._ssTablesBucket.push(ssTableSegment);
-          lastSSTableSegment = ssTableSegment;
+    if (!memTable) {
+      throw {
+        code: INTERNAL_ERROR,
+        error: {
+          message: 'Memtable stack empty'
         }
-
-        await lastSSTableSegment.put(toRemove.key, toRemove.value);
-      }
+      };
     }
+
+    const ssTableSegment = new SSTableSegment(
+      this._dirPathToCreateSSTables,
+      SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES,
+      SM_TABLE_MAX_SIZE_IN_BYTES
+    );
+
+    // traverse memtable and put into sstable segment file in ascending order
+    memTable.traverse(async (log) => {
+      await ssTableSegment.put(log.key, log.value);
+    });
+
+    this._ssTablesBucket.push(ssTableSegment);
+
+    // reset flag to allow memtable to drain
+    this._canDoMemtableDrain = true;
   }
 
   _insertIntoMemTable(log) {
-    const logJson = JSON.parse(log);
-    const key = logJson.key;
-    const value = logJson.data;
+    if (this._memTableStack.length <= 0) {
+      throw {
+        code: INTERNAL_ERROR,
+        error: {
+          message: 'Memtable stack empty'
+        }
+      };
+    }
 
-    this._memTable.insert(key, value);
+    const key = log.key;
+    const value = log.data;
+
+    this._memTableStack[this._memTableStack.length - 1].insert(key, value);
+  }
+
+  async _getFromMemTable(key) {
+    const keyHash = hashCode(key);
+    let value;
+    for (let i=0; i<this._memTableStack.length; i++) {
+      value = this._memTableStack[i].get(keyHash);
+      if (value) break;
+    }
+    return value;
+  }
+
+  async _getFromSSTableBucket(bucket) {
+    let value;
+    for (let i=0; i<bucket.length; i++) {
+      const ssTableSegment = bucket[i];
+      value = await ssTableSegment.get(key);
+      if (value) break;
+    }
+    return value;
   }
 
   async get(key) {
-    // Search in memtable
-    const value = this._memTable.get(key);
-    if (value) return value;
+    let value = await this._getFromMemTable(key);
 
-    // Search in _ssTablesBucket
-    for (let i=0; i<this._ssTablesBucket.length; i++) {
-      const result = await this._ssTablesBucket[i].get(key);
-      if (result.value) return result.value;
+    if (!value) {
+      value = await this._getFromSSTableBucket(this._ssTablesBucket);
+    }
+    if (!value) {
+      value = await this._getFromSSTableBucket(this._compactionBucket);
     }
 
-    // Search in _compactionBucket
-    for (let i=0; i<this._compactionBucket.length; i++) {
-      const result = await this._compactionBucket[i].get(key);
-      if (result.value) return result.value;
-    }
-
-    return null;
+    return value;
   }
 
   put(key, value) {
     const log = {
-      key,
+      key: hashCode(key),
       data: value
     };
 
-    this._logger.addToLog(JSON.stringify(log));
+    this._insertIntoMemTable(log);
   }
 
   close() {

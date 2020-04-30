@@ -1,4 +1,5 @@
 const RedBlackTree = require('../../RedBlackTree');
+const {ONLY_NUMERIC_KEYS_ACCEPTED} = require('../../errors');
 
 describe('Test RedBlackTree', () => {
   const tree = new RedBlackTree(50);
@@ -34,5 +35,14 @@ describe('Test RedBlackTree', () => {
 
   it('should return undefined if get is called with invalid key', () => {
     expect(tree.get(90)).toBeUndefined();
+  });
+
+  it('should throw error if non-numeric key is inserted', () => {
+    try {
+      tree.insert("non-numeric-key", "value");
+    } catch(err) {
+      expect(err.code).toBe(ONLY_NUMERIC_KEYS_ACCEPTED);
+      expect(err.error.message).toBe('Only numeric keys are accepted');
+    }
   })
 });
