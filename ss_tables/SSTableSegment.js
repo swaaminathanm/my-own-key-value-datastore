@@ -4,7 +4,7 @@ const uuid = require('uuid');
 
 const uuidv4 = uuid.v4;
 
-const {FS_OPEN_ERROR, FS_WRITE_ERROR, ONLY_NUMERIC_KEYS_ACCEPTED} = require('../errors');
+const {FS_OPEN_ERROR, FS_WRITE_ERROR, ONLY_NUMERIC_KEYS_ACCEPTED, FS_CLOSE_ERROR} = require('../errors');
 
 /**
  * Criteria:
@@ -103,13 +103,32 @@ class SSTableSegment {
   }
 
   readKeyValueFromPosition(position) {
-    return new Promise( (resolve, reject) => {
+    return new Promise( async (resolve, reject) => {
       fs.open(this.getFileFullPath(), 'r', (err, fd) => {
+        if (err) {
+          reject({
+            code: FS_OPEN_ERROR,
+            error: err
+          });
+          return;
+        }
+
         fs.fstat(fd, async (err, stats) => {
           if (err) {
             reject(err);
           } else {
-            resolve(this._readKeyValueFromPosition(position, fd, stats.size));
+            const result = this._readKeyValueFromPosition(position, fd, stats.size);
+            fs.close(fd, (err) => {
+              if (err) {
+                reject({
+                  code: FS_CLOSE_ERROR,
+                  error: err
+                });
+              }
+              else {
+                resolve(result);
+              }
+            });
           }
         });
       });
@@ -225,7 +244,16 @@ class SSTableSegment {
               } else {
                 this._storeLogInIndex(key, this._position);
                 this._position += bufferToWrite.length;
-                resolve();
+                fs.close(fd, (err) => {
+                  if (err) {
+                    reject({
+                      code: FS_CLOSE_ERROR,
+                      error: err
+                    });
+                  } else {
+                    resolve();
+                  }
+                })
               }
             });
         }

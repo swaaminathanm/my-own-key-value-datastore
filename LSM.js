@@ -2,49 +2,59 @@ const SSTableSegment = require('./ss_tables/SSTableSegment');
 const Compaction = require('./Compaction');
 const RedBlackTree = require('./RedBlackTree');
 const {hashCode} = require('./utils');
-const {
-  TOTAL_MEMTABLE_NODES_ACCEPTABLE,
-  SM_TABLE_MAX_SIZE_IN_BYTES,
-  SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES,
-  COMPACTION_THRESHOLD
-} = require('./config');
 const {INTERNAL_ERROR} = require('./errors');
 
 class LSM {
   constructor(
-    dirPathToCreateSSTables
+    dirPathToCreateSSTables,
+    SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES,
+    COMPACTION_THRESHOLD,
+    DRAIN_MEM_TABLE_INTERVAL,
+    COMPACTION_INTERVAL
   ) {
-    this._memTableStack = [new RedBlackTree(TOTAL_MEMTABLE_NODES_ACCEPTABLE)];
+    this._memTableStack = [new RedBlackTree()];
     this._canDoCompaction = true;
     this._canDoMemtableDrain = true;
     this._compactionBucket = [];
     this._ssTablesBucket = [];
     this._dirPathToCreateSSTables = dirPathToCreateSSTables;
+    this.SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES =   SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES;
+    this.COMPACTION_THRESHOLD = COMPACTION_THRESHOLD;
+    this.DRAIN_MEM_TABLE_INTERVAL = DRAIN_MEM_TABLE_INTERVAL;
+    this.COMPACTION_INTERVAL = COMPACTION_INTERVAL;
 
     this._drainMemTable = this._drainMemTable.bind(this);
     this._insertIntoMemTable = this._insertIntoMemTable.bind(this);
     this._doCompaction = this._doCompaction.bind(this);
 
-    this._updateMemtableIntervalId = setInterval(this._drainMemTable, 1000);
-    this._doCompactionIntervalId = setInterval(this._doCompaction, 10000);
+    if (this.DRAIN_MEM_TABLE_INTERVAL > 0) {
+      this._drainMemtableIntervalId = setInterval(this._drainMemTable, this.DRAIN_MEM_TABLE_INTERVAL);
+    }
+
+    if (this.COMPACTION_INTERVAL > 0) {
+      this._doCompactionIntervalId = setInterval(this._doCompaction, this.COMPACTION_INTERVAL);
+    }
   }
 
   async _doCompaction() {
-    if (!this._canDoCompaction || this._ssTablesBucket.length < COMPACTION_THRESHOLD) {
+    if (!this._canDoCompaction || this._ssTablesBucket.length < this.COMPACTION_THRESHOLD) {
       return;
     }
 
     this._canDoCompaction = false;
 
     // pop out the initially added files into _compactionBucket
-    for (let i=0; i<COMPACTION_THRESHOLD; i++) {
-      this._compactionBucket.push(this._ssTablesBucket.shift());
+    const tempCompactionBucket = [];
+    for (let i=0; i<this.COMPACTION_THRESHOLD; i++) {
+      tempCompactionBucket.push(this._ssTablesBucket.shift());
     }
+    tempCompactionBucket.forEach(bucket => this._compactionBucket.push(bucket));
+    tempCompactionBucket.reverse();
 
     const compaction = new Compaction(
-      this._compactionBucket,
+      tempCompactionBucket,
       this._dirPathToCreateSSTables,
-      SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES
+      this.SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES
     );
 
     const newSSTableSegment = await compaction.doCompaction();
@@ -69,8 +79,8 @@ class LSM {
     // push new memtable to stack so that new logs are stored in this memtable
     this._memTableStack.push(new RedBlackTree());
 
-    // remove the old memtable that should be drained
-    const memTable = this._memTableStack.shift();
+    // get the old memtable that should be drained
+    const memTable = this._memTableStack[0];
 
     if (!memTable) {
       throw {
@@ -83,16 +93,21 @@ class LSM {
 
     const ssTableSegment = new SSTableSegment(
       this._dirPathToCreateSSTables,
-      SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES,
-      SM_TABLE_MAX_SIZE_IN_BYTES
+      this.SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES
     );
 
     // traverse memtable and put into sstable segment file in ascending order
-    memTable.traverse(async (log) => {
-      await ssTableSegment.put(log.key, log.value);
-    });
+    const values = memTable.getValues();
+
+    for (let i=0; i<values.length; i++) {
+      const {key, value} = values[i];
+      await ssTableSegment.put(key, value);
+    }
 
     this._ssTablesBucket.push(ssTableSegment);
+
+    // remove the old memtable
+    this._memTableStack.shift();
 
     // reset flag to allow memtable to drain
     this._canDoMemtableDrain = true;
@@ -114,34 +129,42 @@ class LSM {
     this._memTableStack[this._memTableStack.length - 1].insert(key, value);
   }
 
-  async _getFromMemTable(key) {
-    const keyHash = hashCode(key);
+  async _getFromMemTable(keyHash) {
+    let memTableIndex = this._memTableStack.length - 1;
     let value;
-    for (let i=0; i<this._memTableStack.length; i++) {
-      value = this._memTableStack[i].get(keyHash);
-      if (value) break;
+
+    while (memTableIndex >= 0) {
+      value = this._memTableStack[memTableIndex].get(keyHash);
+      if (value !== undefined) break;
+
+      memTableIndex--;
     }
+
     return value;
   }
 
-  async _getFromSSTableBucket(bucket) {
+  async _getFromSSTableBucket(bucket, keyHash) {
+    let index = bucket.length - 1;
     let value;
-    for (let i=0; i<bucket.length; i++) {
-      const ssTableSegment = bucket[i];
-      value = await ssTableSegment.get(key);
+    while (index >= 0) {
+      value = await bucket[index].get(keyHash);
       if (value) break;
+
+      index--;
     }
     return value;
   }
 
   async get(key) {
-    let value = await this._getFromMemTable(key);
+    const keyHash = hashCode(key);
 
-    if (!value) {
-      value = await this._getFromSSTableBucket(this._ssTablesBucket);
+    let value = await this._getFromMemTable(keyHash);
+
+    if (value === undefined) {
+      value = await this._getFromSSTableBucket(this._ssTablesBucket, keyHash);
     }
-    if (!value) {
-      value = await this._getFromSSTableBucket(this._compactionBucket);
+    if (value === undefined) {
+      value = await this._getFromSSTableBucket(this._compactionBucket, keyHash);
     }
 
     return value;
@@ -156,8 +179,8 @@ class LSM {
     this._insertIntoMemTable(log);
   }
 
-  close() {
-    clearInterval(this._updateMemtableIntervalId);
+  stop() {
+    clearInterval(this._drainMemtableIntervalId);
     clearInterval(this._doCompactionIntervalId);
   }
 }

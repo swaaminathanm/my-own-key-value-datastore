@@ -44,5 +44,24 @@ describe('Test RedBlackTree', () => {
       expect(err.code).toBe(ONLY_NUMERIC_KEYS_ACCEPTED);
       expect(err.error.message).toBe('Only numeric keys are accepted');
     }
-  })
+  });
+
+  it('should call callback with in-order values', () => {
+    const logs = [];
+    tree.traverse(log => logs.push(log));
+
+    expect(logs.map(log => log.key)).toEqual(toInsertKeys);
+  });
+
+  it('should call callback with null values if tree is empty', () => {
+    const mockCallBack = jest.fn();
+    const tree = new RedBlackTree(50);
+
+    tree.traverse(mockCallBack);
+
+    expect(mockCallBack).toHaveBeenCalledWith({
+      key: null,
+      value: null
+    })
+  });
 });

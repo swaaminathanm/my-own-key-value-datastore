@@ -1,13 +1,11 @@
 const SSTableSegment = require('./ss_tables/SSTableSegment');
-const {COMPACTION_SM_TABLE_MAX_SIZE_IN_BYTES} = require('./config');
 
 class Compaction {
 
   /**
    *
-   * @param ssTableSegments - Array of SSTableSegment objects in descending order (latest file first)
+   * @param ssTableSegments - Array of SSTableSegment objects in descending order (latest file first). Only numeric keys are allowed
    * @param basePath - The base path for the new SSTableSegment file that will be created after compaction process
-   * @param SM_TABLE_MAX_SIZE_IN_BYTES - Maximum size of new SSTableSegment file in bytes
    * @param SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES - Maximum sparse space for in-memory index of new SSTableSegment
    */
   constructor(
@@ -18,8 +16,7 @@ class Compaction {
     this._ssTableSegmentsToCompact = ssTableSegments;
     this.ssTableSegment = new SSTableSegment(
       basePath,
-      SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES,
-      COMPACTION_SM_TABLE_MAX_SIZE_IN_BYTES
+      SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES
     );
   }
 
@@ -116,8 +113,8 @@ class Compaction {
       compactionMetaInfoObjects = await getUpdatedMetaInfoObjects(compactionMetaInfoObjects);
 
       compactionMetaInfoObjects.sort((metaInfo1, metaInfo2) => {
-        const key1 = metaInfo1.data.key.toUpperCase();
-        const key2 = metaInfo2.data.key.toUpperCase();
+        const key1 = parseInt(metaInfo1.data.key);
+        const key2 = parseInt(metaInfo2.data.key);
         const priority1 = metaInfo1.priority;
         const priority2 = metaInfo2.priority;
 

@@ -191,10 +191,52 @@ class RedBlackTree {
     x.parent = y;
   }
 
+  /**
+   * This function does In-order traversal of tree and sends data of each node to callback
+   * @param cb
+   */
   traverse(cb) {
+    const stack = [];
+    let current = this.tree.root;
 
+    if (current === this.tree.nil) {
+      cb({
+        key: null,
+        value: null
+      });
+      return;
+    }
+
+    stack.push(current);
+
+    while (stack.length > 0) {
+      current = current.left;
+
+      while (current !== this.tree.nil) {
+        stack.push(current);
+        current = current.left;
+      }
+
+      while (stack.length > 0 && current === this.tree.nil) {
+        current = stack.pop();
+
+        cb({
+          key: current.key,
+          value: current.value
+        });
+
+        current = current.right;
+      }
+
+      if (current !== this.tree.nil) {
+        stack.push(current);
+      }
+    }
   }
 
+  /**
+   * This function traverses node using In-order traversal of tree and returns array of all the nodes
+   */
   getValues() {
     const arr = [];
     this._getValues(this.tree.root, arr);

@@ -11,8 +11,8 @@ describe('Test SSTableSegment', () => {
   const basePath = path.join(__dirname, 'example');
 
   const makeRandomValue = (length) => {
-    let result           = '';
-    const characters       = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let result = '';
+    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     const charactersLength = characters.length;
     for (let i = 0; i < length; i++) {
       result += characters.charAt(Math.floor(Math.random() * charactersLength));
@@ -78,7 +78,7 @@ describe('Test SSTableSegment', () => {
     const ssTableSegment = new SSTableSegment(basePath, 100);
 
     beforeAll(async () => {
-      const N = 50;
+      const N = 5;
       const tempKeys = [];
       for(let i=0;i<N;i++) {
         const randomValue = hashKey(makeRandomValue(5));
@@ -101,14 +101,14 @@ describe('Test SSTableSegment', () => {
     });
 
     it('should get value of key that is present in range of internal index', async () => {
-      const key = Object.keys(dummyDb)[45];
+      const key = Object.keys(dummyDb)[4];
       const value = await ssTableSegment.get(key);
 
       expect(value).toBe(dummyDb[key]);
     });
 
     it('should return null if key is not present', async () => {
-      const key = Object.keys(dummyDb)[45] + "sample-random-hash";
+      const key = Object.keys(dummyDb)[4] + "sample-random-hash";
       let value = await ssTableSegment.get(key);
 
       expect(value).toBeNull();
