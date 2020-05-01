@@ -32,6 +32,10 @@ class RedBlackTree {
     this.TOTAL_MEMTABLE_NODES_ACCEPTABLE = TOTAL_MEMTABLE_NODES_ACCEPTABLE;
   }
 
+  isEmpty() {
+    return this.treeNodesCount === 0;
+  }
+
   insert(key, value) {
     if (!isNaN(key)) {
       this._insert(new Node(key, value));
@@ -48,7 +52,7 @@ class RedBlackTree {
 
   get(key) {
     let x = this.tree.root;
-    let value;
+    let value = null;
 
     while (x !== this.tree.nil) {
       if (key < x.key) {

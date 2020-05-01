@@ -81,6 +81,7 @@ class SSTableSegment {
     return new Promise((resolve, reject) => {
       fs.unlink(this.getFileFullPath(), (err) => {
         if (err) {
+          console.error("=========", err);
           reject(err);
         } else {
           resolve();

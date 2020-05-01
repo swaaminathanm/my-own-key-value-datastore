@@ -7,6 +7,16 @@ const LSM = require('./LSM');
 
 const basePath = path.join(__dirname, 'example');
 
+const makeRandomValue = (length) => {
+  let result = '';
+  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const charactersLength = characters.length;
+  for (let i = 0; i < length; i++) {
+    result += characters.charAt(Math.floor(Math.random() * charactersLength));
+  }
+  return result;
+};
+
 if (!fs.existsSync(basePath)) {
   fs.mkdirSync(basePath);
 }
@@ -197,14 +207,57 @@ const dryRun = async () => {
   });
 };
 
-const testClient = async () => {
+const endToEndTest = async () => {
+  return new Promise(async (resolve) => {
+    const lsm = new LSM(
+      basePath,
+      1000,
+      5,
+      1 * 1000, // 1 sec
+      3 * 1000 // 3 sec
+    );
+    const dummyDb = {};
+
+    const timerId = setInterval(
+      () => {
+      const batchSize = 10;
+
+      for (let i=0; i<batchSize; i++) {
+        const key = makeRandomValue(10);
+        const value = makeRandomValue(20);
+        lsm.put(key, value);
+        dummyDb[key] = value;
+      }
+    }, 500);
+
+    setTimeout(async () => {
+        clearInterval(timerId);
+
+        const keys = Object.keys(dummyDb);
+        for (let i=0; i<keys.length; i++) {
+          const key = keys[i];
+          const value = await lsm.get(key);
+          assert.equal(value, dummyDb[key]);
+        }
+
+        lsm.stop();
+
+        resolve();
+    },
+      1 * 60 * 1000 // 1 mins
+    );
+  });
+};
+
+const main = async () => {
   await shouldGetDataFromMemTable();
   await shouldGetDataFromMemTableAfterDrainEvent();
   await shouldGetDataFromSSTableSegmentFile();
   await checkCompaction();
   await dryRun();
+  await endToEndTest();
 
   rimraf.sync(basePath);
 };
 
-testClient();
+main();

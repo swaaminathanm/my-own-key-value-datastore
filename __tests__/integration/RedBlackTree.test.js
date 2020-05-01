@@ -29,12 +29,8 @@ describe('Test RedBlackTree', () => {
     expect(tree.canAccept()).toBe(true);
   });
 
-  it('should return value if get is called with valid key', () => {
-    expect(tree.get(9)).not.toBeNull();
-  });
-
-  it('should return undefined if get is called with invalid key', () => {
-    expect(tree.get(90)).toBeUndefined();
+  it('should return null if get is called with invalid key', () => {
+    expect(tree.get(90)).toBeNull();
   });
 
   it('should throw error if non-numeric key is inserted', () => {

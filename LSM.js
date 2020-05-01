@@ -15,7 +15,7 @@ class LSM {
     this._memTableStack = [new RedBlackTree()];
     this._canDoCompaction = true;
     this._canDoMemtableDrain = true;
-    this._compactionBucket = [];
+    this._canDeleteSSTableSegmentsBucket = [];
     this._ssTablesBucket = [];
     this._dirPathToCreateSSTables = dirPathToCreateSSTables;
     this.SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES =   SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES;
@@ -48,7 +48,7 @@ class LSM {
     for (let i=0; i<this.COMPACTION_THRESHOLD; i++) {
       tempCompactionBucket.push(this._ssTablesBucket.shift());
     }
-    tempCompactionBucket.forEach(bucket => this._compactionBucket.push(bucket));
+    tempCompactionBucket.forEach(bucket => this._canDeleteSSTableSegmentsBucket.push(bucket));
     tempCompactionBucket.reverse();
 
     const compaction = new Compaction(
@@ -60,10 +60,6 @@ class LSM {
     const newSSTableSegment = await compaction.doCompaction();
 
     this._ssTablesBucket.unshift(newSSTableSegment);
-
-    while (this._compactionBucket.length > 0) {
-      await this._compactionBucket.pop().deleteFile();
-    }
 
     this._canDoCompaction = true;
   }
@@ -89,6 +85,11 @@ class LSM {
           message: 'Memtable stack empty'
         }
       };
+    }
+
+    if (memTable.isEmpty()) {
+      this._canDoMemtableDrain = true;
+      return;
     }
 
     const ssTableSegment = new SSTableSegment(
@@ -130,29 +131,23 @@ class LSM {
   }
 
   async _getFromMemTable(keyHash) {
-    let memTableIndex = this._memTableStack.length - 1;
-    let value;
-
-    while (memTableIndex >= 0) {
-      value = this._memTableStack[memTableIndex].get(keyHash);
-      if (value !== undefined) break;
-
-      memTableIndex--;
-    }
-
-    return value;
+    return this._memTableStack.reduce((result,_ , index) => {
+      if (result === null) {
+        return this._memTableStack[this._memTableStack.length - index - 1].get(keyHash)
+      } else {
+        return result;
+      }
+    }, null);
   }
 
   async _getFromSSTableBucket(bucket, keyHash) {
-    let index = bucket.length - 1;
-    let value;
-    while (index >= 0) {
-      value = await bucket[index].get(keyHash);
-      if (value) break;
-
-      index--;
-    }
-    return value;
+    return bucket.reduce((promise, _, index) => {
+      const ssTableSegment = bucket[bucket.length - index - 1]; // iterate in reverse
+      return promise.then((value) => {
+        if (value === null) return ssTableSegment.get(keyHash);
+        else return value;
+      });
+    }, Promise.resolve(null));
   }
 
   async get(key) {
@@ -160,11 +155,11 @@ class LSM {
 
     let value = await this._getFromMemTable(keyHash);
 
-    if (value === undefined) {
+    if (value === null) {
       value = await this._getFromSSTableBucket(this._ssTablesBucket, keyHash);
     }
-    if (value === undefined) {
-      value = await this._getFromSSTableBucket(this._compactionBucket, keyHash);
+    if (value === null) {
+      value = await this._getFromSSTableBucket(this._canDeleteSSTableSegmentsBucket, keyHash);
     }
 
     return value;
