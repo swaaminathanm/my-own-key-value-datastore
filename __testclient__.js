@@ -213,14 +213,15 @@ const endToEndTest = async () => {
       basePath,
       1000,
       5,
-      1 * 1000, // 1 sec
-      3 * 1000 // 3 sec
+      1 * 1000,
+      3 * 1000
     );
     const dummyDb = {};
 
     const timerId = setInterval(
       () => {
       const batchSize = 10;
+      const startTime = new Date();
 
       for (let i=0; i<batchSize; i++) {
         const key = makeRandomValue(10);
@@ -228,23 +229,31 @@ const endToEndTest = async () => {
         lsm.put(key, value);
         dummyDb[key] = value;
       }
+
+      console.log('time_taken:batch_insert', `batch_size:${batchSize}`, `time:${new Date() - startTime}`)
     }, 500);
 
     setTimeout(async () => {
         clearInterval(timerId);
 
+        console.log('total_insert_count', Object.keys(dummyDb).length);
+
+        const startTime = new Date();
         const keys = Object.keys(dummyDb);
+
         for (let i=0; i<keys.length; i++) {
           const key = keys[i];
           const value = await lsm.get(key);
           assert.equal(value, dummyDb[key]);
         }
 
+        console.log('time_taken:get', `time:${new Date() - startTime}`);
+
         lsm.stop();
 
         resolve();
     },
-      1 * 60 * 1000 // 1 mins
+      1 * 60 * 1000
     );
   });
 };
