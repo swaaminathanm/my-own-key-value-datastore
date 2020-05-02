@@ -1,3 +1,5 @@
+const { List } = require('immutable');
+
 const SSTableSegment = require('./ss_tables/SSTableSegment');
 const Compaction = require('./Compaction');
 const RedBlackTree = require('./RedBlackTree');
@@ -13,10 +15,9 @@ class LSM {
     COMPACTION_INTERVAL
   ) {
     this._memTableStack = [new RedBlackTree()];
-    this._canDoCompaction = true;
-    this._canDoMemtableDrain = true;
-    this._canDeleteSSTableSegmentsBucket = [];
-    this._ssTablesBucket = [];
+    this._canDoCompactionFlag = true;
+    this._canDoMemtableDrainFlag = true;
+    this._ssTablesListBucket = []; // latest snapshot of the list will be in the end of this array
     this._dirPathToCreateSSTables = dirPathToCreateSSTables;
     this.SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES =   SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES;
     this.COMPACTION_THRESHOLD = COMPACTION_THRESHOLD;
@@ -36,82 +37,93 @@ class LSM {
     }
   }
 
+  _canDoCompaction() {
+    const ssTableList = this._ssTablesListBucket[this._ssTablesListBucket.length - 1];
+    return this._canDoCompactionFlag && ssTableList && ssTableList.size >= this.COMPACTION_THRESHOLD;
+  }
+
   async _doCompaction() {
-    if (!this._canDoCompaction || this._ssTablesBucket.length < this.COMPACTION_THRESHOLD) {
-      return;
+    if (this._canDoCompaction()) {
+      this._canDoCompactionFlag = false;
+
+      const tempCompactionBucket = this._removeSSTablesFromListInBucket(this.COMPACTION_THRESHOLD);
+
+      if (tempCompactionBucket) {
+        tempCompactionBucket.reverse();
+
+        const compaction = new Compaction(
+          tempCompactionBucket,
+          this._dirPathToCreateSSTables,
+          this.SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES
+        );
+
+        const newSSTableSegment = await compaction.doCompaction();
+
+        this._addSSTableToListInBucket(newSSTableSegment);
+      }
     }
 
-    this._canDoCompaction = false;
+    this._canDoCompactionFlag = true;
+  }
 
-    // pop out the initially added files into _compactionBucket
-    const tempCompactionBucket = [];
-    for (let i=0; i<this.COMPACTION_THRESHOLD; i++) {
-      tempCompactionBucket.push(this._ssTablesBucket.shift());
-    }
-    tempCompactionBucket.forEach(bucket => this._canDeleteSSTableSegmentsBucket.push(bucket));
-    tempCompactionBucket.reverse();
-
-    const compaction = new Compaction(
-      tempCompactionBucket,
-      this._dirPathToCreateSSTables,
-      this.SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES
-    );
-
-    const newSSTableSegment = await compaction.doCompaction();
-
-    this._ssTablesBucket.unshift(newSSTableSegment);
-
-    this._canDoCompaction = true;
+  _canDoMemTableDrain() {
+    return this._canDoMemtableDrainFlag && this._memTableStack.length > 0 && !this._memTableStack[0].isEmpty();
   }
 
   async _drainMemTable() {
-    if (!this._canDoMemtableDrain) {
-      return;
+    if (this._canDoMemTableDrain()) {
+      this._canDoMemtableDrainFlag = false;
+
+      this._memTableStack.push(new RedBlackTree());
+
+      const memTable = this._memTableStack[0];
+
+      const ssTableSegment = new SSTableSegment(
+        this._dirPathToCreateSSTables,
+        this.SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES
+      );
+
+      const values = memTable.getValues();
+
+      for (let i=0; i<values.length; i++) {
+        const {key, value} = values[i];
+        await ssTableSegment.put(key, value);
+      }
+
+      this._addSSTableToListInBucket(ssTableSegment, true);
+
+      this._memTableStack.shift();
     }
 
-    // Since memtable drain is happening we cannot accept another drain request until this finishes
-    this._canDoMemtableDrain = false;
+    this._canDoMemtableDrainFlag = true;
+  }
 
-    // push new memtable to stack so that new logs are stored in this memtable
-    this._memTableStack.push(new RedBlackTree());
-
-    // get the old memtable that should be drained
-    const memTable = this._memTableStack[0];
-
-    if (!memTable) {
-      throw {
-        code: INTERNAL_ERROR,
-        error: {
-          message: 'Memtable stack empty'
-        }
-      };
+  _addSSTableToListInBucket(ssTableFragment, addToLastInList = false) {
+    let ssTableList = this._ssTablesListBucket[this._ssTablesListBucket.length - 1];
+    if (!ssTableList) {
+      ssTableList = List();
     }
 
-    if (memTable.isEmpty()) {
-      this._canDoMemtableDrain = true;
-      return;
+
+    if (addToLastInList) {
+      this._ssTablesListBucket.push(ssTableList.push(ssTableFragment));
+    } else {
+      this._ssTablesListBucket.push(ssTableList.unshift(ssTableFragment));
     }
+  }
 
-    const ssTableSegment = new SSTableSegment(
-      this._dirPathToCreateSSTables,
-      this.SS_TABLE_IN_MEMORY_SPARSE_KEYS_THRESHOLD_BYTES
-    );
-
-    // traverse memtable and put into sstable segment file in ascending order
-    const values = memTable.getValues();
-
-    for (let i=0; i<values.length; i++) {
-      const {key, value} = values[i];
-      await ssTableSegment.put(key, value);
+  _removeSSTablesFromListInBucket(countToPop) {
+    let ssTableList = this._ssTablesListBucket[this._ssTablesListBucket.length - 1];
+    if (ssTableList && ssTableList.size >= countToPop) {
+      const ssTablesToReturn = [];
+      let updatesSSTableList = ssTableList;
+      for(let i=0; i<countToPop; i++) {
+        ssTablesToReturn.push(ssTableList.get(i));
+        updatesSSTableList = updatesSSTableList.shift();
+      }
+      this._ssTablesListBucket.push(updatesSSTableList);
+      return ssTablesToReturn;
     }
-
-    this._ssTablesBucket.push(ssTableSegment);
-
-    // remove the old memtable
-    this._memTableStack.shift();
-
-    // reset flag to allow memtable to drain
-    this._canDoMemtableDrain = true;
   }
 
   _insertIntoMemTable(log) {
@@ -130,7 +142,7 @@ class LSM {
     this._memTableStack[this._memTableStack.length - 1].insert(key, value);
   }
 
-  async _getFromMemTable(keyHash) {
+  _getFromMemTable(keyHash) {
     return this._memTableStack.reduce((result,_ , index) => {
       if (result === null) {
         return this._memTableStack[this._memTableStack.length - index - 1].get(keyHash)
@@ -140,14 +152,32 @@ class LSM {
     }, null);
   }
 
-  async _getFromSSTableBucket(bucket, keyHash) {
-    return bucket.reduce((promise, _, index) => {
-      const ssTableSegment = bucket[bucket.length - index - 1]; // iterate in reverse
+  _getFromSSTableList(ssTableList, keyHash) {
+    return ssTableList.reduce((promise, _, index) => {
+      const ssTableSegment = ssTableList.get(ssTableList.size - index - 1); // iterate in reverse
       return promise.then((value) => {
         if (value === null) return ssTableSegment.get(keyHash);
         else return value;
       });
     }, Promise.resolve(null));
+  }
+
+  async _getFromSSTableListBucket(keyHash) {
+    let value = null;
+    let index = this._ssTablesListBucket.length - 1;
+
+    while (index >= 0) {
+      const ssTableList = this._ssTablesListBucket[index];
+
+      if (ssTableList) {
+        value = await this._getFromSSTableList(ssTableList, keyHash);
+        if (value !== null) break;
+      }
+
+      index--;
+    }
+
+    return value;
   }
 
   async get(key) {
@@ -156,10 +186,7 @@ class LSM {
     let value = await this._getFromMemTable(keyHash);
 
     if (value === null) {
-      value = await this._getFromSSTableBucket(this._ssTablesBucket, keyHash);
-    }
-    if (value === null) {
-      value = await this._getFromSSTableBucket(this._canDeleteSSTableSegmentsBucket, keyHash);
+      value = await this._getFromSSTableListBucket(keyHash);
     }
 
     return value;
